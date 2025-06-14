@@ -3,11 +3,11 @@
   "functions": {
     "api/upload.js": {
       "memory": 1024,
-      "maxDuration": 30
+      "maxDuration": 10
     },
     "api/usage.js": {
       "memory": 1024,
-      "maxDuration": 30
+      "maxDuration": 10
     }
   }
 }
