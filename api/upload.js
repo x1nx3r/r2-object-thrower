@@ -436,7 +436,7 @@ export default async function handler(req, res) {
     fs.unlinkSync(file.filepath);
 
     // Construct public URL - fix the double bucket issue
-    const publicUrl = `https://${process.env.R2_CUSTOM_DOMAIN}/${filename}`;
+    const publicUrl = `https://${process.env.R2_CUSTOM_DOMAIN}/${process.env.R2_BUCKET}/${filename}`;
 
     // Log successful upload
     console.log(
