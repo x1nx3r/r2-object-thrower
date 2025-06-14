@@ -2,8 +2,6 @@
 
 A beautiful, modern file uploader with real-time usage tracking for Cloudflare R2 storage. Built with React, Vite, and Tailwind CSS, featuring automatic usage limits to prevent overages on the free tier.
 
-![R2 Uploader Preview](https://via.placeholder.com/800x400/667eea/ffffff?text=R2+Uploader+Preview)
-
 ## 🚀 Features
 
 ### 📁 **File Upload**
