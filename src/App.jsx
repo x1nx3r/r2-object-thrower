@@ -180,7 +180,7 @@ function App() {
       <div className="glass rounded-3xl p-12 max-w-2xl w-full shadow-2xl">
         {/* Title */}
         <h1 className="text-4xl md:text-5xl font-bold text-gradient text-center mb-8 tracking-tight">
-          ✨ Cloudflare R2 Uploader
+          ✨ Udin's Pseudo-CDN Service
         </h1>
 
         {/* Usage Display */}
