@@ -1,0 +1,10 @@
+name = "r2-usage-tracker"
+main = "usage-tracker.js"
+compatibility_date = "2024-01-15"
+
+[[kv_namespaces]]
+binding = "your-binding"
+id = "your-id"
+
+[vars]
+API_SECRET = "your-secret"

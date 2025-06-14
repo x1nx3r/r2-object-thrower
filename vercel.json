@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "functions": {
+    "api/upload.js": {
+      "memory": 1024,
+      "maxDuration": 30
+    },
+    "api/usage.js": {
+      "memory": 1024,
+      "maxDuration": 30
+    }
+  }
+}

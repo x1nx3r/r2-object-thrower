@@ -1,0 +1,78 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+
+@import "tailwindcss";
+
+@utility text-gradient {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+@utility bg-gradient-purple {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+@utility bg-gradient-green {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+}
+
+@utility bg-gradient-red {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+}
+
+@utility glass {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+@keyframes shimmer {
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+@keyframes slideIn {
+    0% {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes bounceIn {
+    0% {
+        opacity: 0;
+        transform: scale(0.3);
+    }
+    50% {
+        transform: scale(1.05);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@utility animate-shimmer {
+    animation: shimmer 2s infinite;
+}
+
+@utility animate-slide-in {
+    animation: slideIn 0.3s ease-out;
+}
+
+@utility animate-bounce-in {
+    animation: bounceIn 0.5s ease-out;
+}
+
+@utility font-inter {
+    font-family: "Inter", system-ui, sans-serif;
+}

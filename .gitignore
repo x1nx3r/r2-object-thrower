@@ -1,0 +1,173 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Dependencies
+node_modules/
+.npm
+.pnpm-store/
+
+# Build outputs
+dist/
+dist-ssr/
+build/
+out/
+.next/
+.nuxt/
+.output/
+
+# Environment files - CRITICAL SECURITY
+.env
+.env.*
+!.env.example
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Vercel
+.vercel/
+.vercel
+
+# Cloudflare Workers
+worker/dist/
+worker/.dev.vars
+worker/.mf/
+worker/.wrangler/
+worker/wrangler.toml
+.wrangler/
+
+# API Keys and Secrets - DO NOT COMMIT
+**/secrets.json
+**/credentials.json
+**/*secret*
+**/*key*.json
+**/*token*
+**/*credential*
+
+# R2 and Cloudflare specific
+r2-config.json
+cloudflare-config.json
+cf-*.json
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Cache directories
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows
+*.tmp
+*.temp
+Desktop.ini
+$RECYCLE.BIN/
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+.nyc_output
+
+# ESLint cache
+.eslintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional npm cache directory
+.npm
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env.test
+
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# yarn v2
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# Temporary folders
+tmp/
+temp/
+
+# Runtime configuration files
+config/local.json
+config/development.json
+config/production.json
+
+# Backup files
+*.backup
+*.bak
+*.orig
+
+# Test files that might contain sensitive data
+test-uploads/
+uploads/
+public/uploads/
+
+# Local development files
+local-*
+dev-*
+debug-*
+
+# Documentation build
+docs/build/
+
+# Storybook build outputs
+storybook-static
+
+# Temporary files created by IDEs
+*.tmp
+*.temp
+.history/
