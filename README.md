@@ -18,11 +18,9 @@ A beautiful, modern file uploader with real-time usage tracking for Cloudflare R
 - ✅ Visual progress bars with color coding
 
 ### 🎨 **Beautiful UI**
-- ✅ Modern glassmorphism design
 - ✅ Tailwind CSS styling
 - ✅ Smooth animations and transitions
 - ✅ Responsive mobile-friendly layout
-- ✅ Dark gradient backgrounds
 
 ### ⚡ **Performance**
 - ✅ Cloudflare Workers for edge computing
