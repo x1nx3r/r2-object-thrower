@@ -5,8 +5,6 @@ A beautiful, modern file uploader with real-time usage tracking for Cloudflare R
 ## 🚀 Features
 
 ### 📁 **File Upload**
-- ✅ Drag & drop interface
-- ✅ Click to upload
 - ✅ Image format support (JPEG, PNG, GIF, WebP)
 - ✅ 10MB file size limit
 - ✅ Real-time upload progress
