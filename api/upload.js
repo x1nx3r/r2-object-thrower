@@ -25,9 +25,6 @@ const USAGE_THRESHOLD = 0.5; // 50%
 const rateLimitStore = new Map();
 const uploadAttempts = new Map();
 
-// CSRF token store (in production, use secure session storage)
-const csrfTokens = new Map();
-
 // File type validation with magic numbers
 const ALLOWED_MIME_TYPES = [
   "image/jpeg",
@@ -159,85 +156,51 @@ async function validateFile(file) {
   return true;
 }
 
-// Helper function to increment usage counter
-async function incrementUsageCounter(operation, fileSize = 0) {
+// Get current usage from our analytics API
+async function getCurrentUsage() {
   try {
-    const workerUrl = process.env.CF_WORKER_URL;
-    const apiSecret = process.env.CF_WORKER_SECRET;
+    // Use a relative URL to call our own usage API
+    const baseUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : process.env.NEXTAUTH_URL || "http://localhost:3000";
 
-    if (!workerUrl || !apiSecret) {
-      console.warn("Worker not configured, skipping usage tracking");
-      return { success: false, error: "Worker not configured" };
-    }
-
-    const response = await fetch(`${workerUrl}/increment`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiSecret}`,
-      },
-      body: JSON.stringify({
-        operation,
-        fileSize,
-      }),
-      signal: AbortSignal.timeout(10000), // 10 second timeout
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `Worker API error: ${response.status} ${response.statusText}`,
-      );
-    }
-
-    const result = await response.json();
-    return result;
-  } catch (error) {
-    console.error("Failed to increment usage counter:", error);
-    return { success: false, error: error.message };
-  }
-}
-
-// Get R2 usage from Cloudflare Worker
-async function getR2Usage() {
-  try {
-    const workerUrl = process.env.CF_WORKER_URL;
-
-    if (!workerUrl) {
-      console.warn("No worker URL configured");
-      return { storageBytes: 0, classAOperations: 0, classBOperations: 0 };
-    }
-
-    const response = await fetch(`${workerUrl}/usage`, {
+    const response = await fetch(`${baseUrl}/api/usage`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
       },
-      signal: AbortSignal.timeout(10000), // 10 second timeout
+      signal: AbortSignal.timeout(15000), // 15 second timeout
     });
 
     if (!response.ok) {
       throw new Error(
-        `Worker API error: ${response.status} ${response.statusText}`,
+        `Usage API error: ${response.status} ${response.statusText}`,
       );
     }
 
     const data = await response.json();
-
-    return {
-      storageBytes: data.storageBytes || 0,
-      classAOperations: data.classAOperations || 0,
-      classBOperations: data.classBOperations || 0,
-      lastUpdated: data.lastUpdated,
-      month: data.month,
-    };
+    return data.usage;
   } catch (error) {
-    console.error("Error fetching usage from worker:", error);
+    console.error("Error fetching current usage:", error);
+
     // Return conservative estimates on error to prevent overuse
     return {
-      storageBytes: FREE_PLAN_LIMITS.STORAGE_GB * 1024 * 1024 * 1024 * 0.4,
-      classAOperations: FREE_PLAN_LIMITS.CLASS_A_OPERATIONS * 0.4,
-      classBOperations: FREE_PLAN_LIMITS.CLASS_B_OPERATIONS * 0.4,
+      storage: {
+        currentGB: FREE_PLAN_LIMITS.STORAGE_GB * 0.6, // Assume 60% used
+        limit: FREE_PLAN_LIMITS.STORAGE_GB,
+        percentage: 60,
+        currentBytes: FREE_PLAN_LIMITS.STORAGE_GB * 0.6 * 1024 * 1024 * 1024,
+      },
+      classA: {
+        currentValue: FREE_PLAN_LIMITS.CLASS_A_OPERATIONS * 0.6,
+        limit: FREE_PLAN_LIMITS.CLASS_A_OPERATIONS,
+        percentage: 60,
+      },
+      classB: {
+        currentValue: FREE_PLAN_LIMITS.CLASS_B_OPERATIONS * 0.6,
+        limit: FREE_PLAN_LIMITS.CLASS_B_OPERATIONS,
+        percentage: 60,
+      },
       error: error.message,
     };
   }
@@ -245,26 +208,31 @@ async function getR2Usage() {
 
 // Check if usage is approaching limits
 async function checkUsageLimits(fileSize = 0) {
-  const currentUsage = await getR2Usage();
+  const currentUsage = await getCurrentUsage();
 
-  const projectedStorageBytes = currentUsage.storageBytes + fileSize;
-  const projectedClassA = currentUsage.classAOperations + 1;
+  // Calculate projected usage after this upload
+  const projectedStorageBytes =
+    (currentUsage.storage.currentBytes || 0) + fileSize;
+  const projectedStorageGB = projectedStorageBytes / (1024 * 1024 * 1024);
+  const projectedClassA = currentUsage.classA.currentValue + 1; // This upload counts as 1 Class A operation
 
-  const storageUsage =
-    projectedStorageBytes / (FREE_PLAN_LIMITS.STORAGE_GB * 1024 * 1024 * 1024);
-  const classAUsage = projectedClassA / FREE_PLAN_LIMITS.CLASS_A_OPERATIONS;
-  const classBUsage =
-    currentUsage.classBOperations / FREE_PLAN_LIMITS.CLASS_B_OPERATIONS;
+  const storagePercentage =
+    (projectedStorageGB / FREE_PLAN_LIMITS.STORAGE_GB) * 100;
+  const classAPercentage =
+    (projectedClassA / FREE_PLAN_LIMITS.CLASS_A_OPERATIONS) * 100;
+  const classBPercentage = currentUsage.classB.percentage; // No change for Class B
 
   const exceeded = [];
-  if (storageUsage > USAGE_THRESHOLD) {
-    exceeded.push(`Storage (${(storageUsage * 100).toFixed(1)}%)`);
+  const threshold = USAGE_THRESHOLD * 100; // Convert to percentage
+
+  if (storagePercentage > threshold) {
+    exceeded.push(`Storage (${storagePercentage.toFixed(1)}%)`);
   }
-  if (classAUsage > USAGE_THRESHOLD) {
-    exceeded.push(`Class A Operations (${(classAUsage * 100).toFixed(1)}%)`);
+  if (classAPercentage > threshold) {
+    exceeded.push(`Class A Operations (${classAPercentage.toFixed(1)}%)`);
   }
-  if (classBUsage > USAGE_THRESHOLD) {
-    exceeded.push(`Class B Operations (${(classBUsage * 100).toFixed(1)}%)`);
+  if (classBPercentage > threshold) {
+    exceeded.push(`Class B Operations (${classBPercentage.toFixed(1)}%)`);
   }
 
   return {
@@ -272,26 +240,27 @@ async function checkUsageLimits(fileSize = 0) {
     exceededLimits: exceeded,
     usage: {
       storage: {
-        current: storageUsage,
-        currentGB: (currentUsage.storageBytes / (1024 * 1024 * 1024)).toFixed(
-          2,
-        ),
+        current: currentUsage.storage.percentage,
+        currentGB: currentUsage.storage.currentGB,
+        projectedGB: projectedStorageGB.toFixed(3),
+        projectedPercentage: storagePercentage.toFixed(2),
         limit: FREE_PLAN_LIMITS.STORAGE_GB,
-        projected: (projectedStorageBytes / (1024 * 1024 * 1024)).toFixed(2),
       },
       classA: {
-        current: classAUsage,
-        currentValue: currentUsage.classAOperations,
+        current: currentUsage.classA.percentage,
+        currentValue: currentUsage.classA.currentValue,
         projectedValue: projectedClassA,
+        projectedPercentage: classAPercentage.toFixed(2),
         limit: FREE_PLAN_LIMITS.CLASS_A_OPERATIONS,
       },
       classB: {
-        current: classBUsage,
-        currentValue: currentUsage.classBOperations,
+        current: currentUsage.classB.percentage,
+        currentValue: currentUsage.classB.currentValue,
         limit: FREE_PLAN_LIMITS.CLASS_B_OPERATIONS,
       },
     },
-    workerError: currentUsage.error,
+    analyticsError: currentUsage.error,
+    shouldBlockUploads: currentUsage.shouldBlockUploads,
   };
 }
 
@@ -376,19 +345,23 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: validationError.message });
     }
 
-    // Check usage limits
+    // Check usage limits BEFORE uploading
     const usageCheck = await checkUsageLimits(file.size);
 
-    if (!usageCheck.canUpload) {
+    if (!usageCheck.canUpload || usageCheck.shouldBlockUploads) {
       fs.unlinkSync(file.filepath);
       return res.status(429).json({
-        error: "Upload limit reached",
-        message: `Cannot upload: approaching limits for ${usageCheck.exceededLimits.join(", ")}`,
+        error: "Upload blocked due to usage limits",
+        message:
+          usageCheck.exceededLimits.length > 0
+            ? `Cannot upload: approaching limits for ${usageCheck.exceededLimits.join(", ")}`
+            : "Upload blocked: usage threshold exceeded",
         usage: {
-          storage: `${(usageCheck.usage.storage.current * 100).toFixed(1)}% (${usageCheck.usage.storage.currentGB}GB of ${usageCheck.usage.storage.limit}GB)`,
-          classA: `${(usageCheck.usage.classA.current * 100).toFixed(1)}% (${usageCheck.usage.classA.currentValue.toLocaleString()} of ${usageCheck.usage.classA.limit.toLocaleString()})`,
-          classB: `${(usageCheck.usage.classB.current * 100).toFixed(1)}% (${usageCheck.usage.classB.currentValue.toLocaleString()} of ${usageCheck.usage.classB.limit.toLocaleString()})`,
+          storage: `${usageCheck.usage.storage.projectedPercentage}% (${usageCheck.usage.storage.projectedGB}GB of ${usageCheck.usage.storage.limit}GB after upload)`,
+          classA: `${usageCheck.usage.classA.projectedPercentage}% (${usageCheck.usage.classA.projectedValue.toLocaleString()} of ${usageCheck.usage.classA.limit.toLocaleString()})`,
+          classB: `${usageCheck.usage.classB.current.toFixed(1)}% (${usageCheck.usage.classB.currentValue.toLocaleString()} of ${usageCheck.usage.classB.limit.toLocaleString()})`,
         },
+        threshold: `${USAGE_THRESHOLD * 100}%`,
       });
     }
 
@@ -425,39 +398,46 @@ export default async function handler(req, res) {
           "upload-ip": clientIP,
           "upload-time": new Date().toISOString(),
           "original-name": file.originalFilename.substring(0, 100), // Truncate for safety
+          "file-size": file.size.toString(),
         },
       }),
     );
 
-    // Track usage
-    const trackingResult = await incrementUsageCounter("classA", file.size);
-
     // Clean up temp file
     fs.unlinkSync(file.filepath);
 
-    // Construct public URL - fix the double bucket issue
-    const publicUrl = `https://${process.env.R2_CUSTOM_DOMAIN}/${process.env.R2_BUCKET}/${filename}`;
+    // Construct public URL
+    const publicUrl = `https://${process.env.R2_CUSTOM_DOMAIN}/${filename}`;
 
     // Log successful upload
     console.log(
       `Upload successful: ${filename} (${file.size} bytes) from IP: ${clientIP}`,
     );
 
-    // Return response (remove debug info in production)
+    // Get updated usage after upload (optional, for response)
+    let updatedUsage = null;
+    try {
+      // Small delay to allow analytics to process
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      updatedUsage = await getCurrentUsage();
+    } catch (error) {
+      console.warn("Failed to fetch updated usage:", error);
+    }
+
+    // Return response
     const isProduction = process.env.NODE_ENV === "production";
 
     return res.status(200).json({
       url: publicUrl,
-      usage: {
-        storage: `${(usageCheck.usage.storage.current * 100).toFixed(1)}% (${usageCheck.usage.storage.projected}GB of ${usageCheck.usage.storage.limit}GB after upload)`,
-        classA: `${((usageCheck.usage.classA.projectedValue / FREE_PLAN_LIMITS.CLASS_A_OPERATIONS) * 100).toFixed(1)}% (${usageCheck.usage.classA.projectedValue.toLocaleString()} of ${usageCheck.usage.classA.limit.toLocaleString()})`,
-        classB: `${(usageCheck.usage.classB.current * 100).toFixed(1)}% (${usageCheck.usage.classB.currentValue.toLocaleString()} of ${usageCheck.usage.classB.limit.toLocaleString()})`,
-      },
-      tracking: {
-        success: trackingResult.success !== false,
-        operation: "classA",
-        fileSize: file.size,
-      },
+      message: "Upload successful",
+      usage: updatedUsage
+        ? {
+            storage: `${updatedUsage.storage.percentage.toFixed(1)}% (${updatedUsage.storage.currentGB}GB of ${updatedUsage.storage.limit}GB)`,
+            classA: `${updatedUsage.classA.percentage.toFixed(1)}% (${updatedUsage.classA.currentValue.toLocaleString()} of ${updatedUsage.classA.limit.toLocaleString()})`,
+            classB: `${updatedUsage.classB.percentage.toFixed(1)}% (${updatedUsage.classB.currentValue.toLocaleString()} of ${updatedUsage.classB.limit.toLocaleString()})`,
+            lastUpdated: updatedUsage.lastUpdated,
+          }
+        : usageCheck.usage,
       // Only include debug info in development
       ...(!isProduction && {
         debug: {
@@ -465,8 +445,11 @@ export default async function handler(req, res) {
           fileSize: file.size,
           mimetype: file.mimetype,
           processingTime: Date.now() - startTime,
-          workerConfigured: !!(
-            process.env.CF_WORKER_URL && process.env.CF_WORKER_SECRET
+          usageCheck: usageCheck,
+          analyticsConfigured: !!(
+            process.env.CLOUDFLARE_ACCOUNT_ID &&
+            process.env.CLOUDFLARE_API_TOKEN &&
+            process.env.CLOUDFLARE_BUCKET_NAME
           ),
         },
       }),
