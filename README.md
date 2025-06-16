@@ -1,6 +1,6 @@
 # ✨ Cloudflare R2 Uploader
 
-A beautiful, modern file uploader with real-time usage tracking for Cloudflare R2 storage. Built with React, Vite, and Tailwind CSS, featuring automatic usage limits to prevent overages on the free tier. It uses vercel function as a pseudo-backend for the upload functionality and Cloudflare KV to track the usage (CAUTION: the usage tracker is too janky it might not work as intended)
+A beautiful, modern file uploader with real-time usage tracking for Cloudflare R2 storage. Built with React, Vite, and Tailwind CSS, featuring automatic usage limits to prevent overages on the free tier. It uses vercel function as a pseudo-backend for the upload functionality and Cloudflare KV to track the usage (CAUTION: the usage tracker is too janky it might not work as intended.)
 
 ## 🚀 Features
 
