@@ -1,149 +1,215 @@
+/ api/upload.js
+
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import formidable from "formidable";
 import fs from "fs";
 import crypto from "crypto";
 
+/**
+ * Initialize S3 Client for Cloudflare R2
+ * R2 is S3-compatible, so we use AWS SDK with custom endpoint
+ */
 const s3 = new S3Client({
-  region: process.env.R2_REGION || "auto",
-  endpoint: process.env.R2_ENDPOINT,
+  region: process.env.R2_REGION || "auto",  // R2 uses "auto" region
+  endpoint: process.env.R2_ENDPOINT,        // R2 endpoint URL
   credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY,
-    secretAccessKey: process.env.R2_SECRET_KEY,
+    accessKeyId: process.env.R2_ACCESS_KEY,     // R2 Access Key ID
+    secretAccessKey: process.env.R2_SECRET_KEY, // R2 Secret Access Key
   },
 });
 
-// Cloudflare R2 Free Plan Limits
+// Cloudflare R2 Free Plan limits - same as usage.js for consistency
 const FREE_PLAN_LIMITS = {
-  STORAGE_GB: 10,
-  CLASS_A_OPERATIONS: 1_000_000,
-  CLASS_B_OPERATIONS: 10_000_000,
+  STORAGE_GB: 10,                    // 10GB storage limit
+  CLASS_A_OPERATIONS: 1_000_000,     // 1M Class A operations (writes/lists)
+  CLASS_B_OPERATIONS: 10_000_000,    // 10M Class B operations (reads)
 };
 
-const USAGE_THRESHOLD = 0.5; // 50%
+const USAGE_THRESHOLD = 0.5; // 50% - Block uploads when any limit hits this percentage
 
-// Rate limiting storage (in production, use Redis/KV)
-const rateLimitStore = new Map();
-const uploadAttempts = new Map();
+/**
+ * In-memory storage for rate limiting
+ * In production, these should be moved to Redis or Cloudflare KV
+ * for persistence across serverless function instances
+ */
+const rateLimitStore = new Map();      // Stores upload attempts per IP
+const uploadAttempts = new Map();      // Additional tracking (currently unused)
 
-// File type validation with magic numbers
+/**
+ * File type security configuration
+ * Only allow image files with strict validation
+ */
 const ALLOWED_MIME_TYPES = [
   "image/jpeg",
-  "image/jpg",
+  "image/jpg",    // Some browsers use this instead of image/jpeg
   "image/png",
   "image/gif",
   "image/webp",
 ];
 
+/**
+ * Magic numbers (file signatures) for file type validation
+ * These are the first few bytes that identify real file types
+ * Prevents users from uploading malicious files with fake extensions
+ */
 const MAGIC_NUMBERS = {
-  "image/jpeg": [0xff, 0xd8, 0xff],
-  "image/png": [0x89, 0x50, 0x4e, 0x47],
-  "image/gif": [0x47, 0x49, 0x46],
-  "image/webp": [0x52, 0x49, 0x46, 0x46], // RIFF header for WebP
+  "image/jpeg": [0xff, 0xd8, 0xff],           // JPEG files start with these bytes
+  "image/png": [0x89, 0x50, 0x4e, 0x47],      // PNG signature
+  "image/gif": [0x47, 0x49, 0x46],            // GIF signature "GIF"
+  "image/webp": [0x52, 0x49, 0x46, 0x46],     // WebP RIFF header
 };
 
-// Security utilities
+/**
+ * Extract client IP address from request headers
+ * Handles various proxy configurations (Vercel, Cloudflare, etc.)
+ * @param {Object} req - HTTP request object
+ * @returns {string} Client IP address
+ */
 function getClientIP(req) {
   return (
-    req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-    req.headers["x-real-ip"] ||
-    req.connection?.remoteAddress ||
-    req.socket?.remoteAddress ||
-    "unknown"
+    req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || // Most common proxy header
+    req.headers["x-real-ip"] ||                              // Alternative proxy header
+    req.connection?.remoteAddress ||                         // Direct connection
+    req.socket?.remoteAddress ||                             // Alternative direct connection
+    "unknown"                                                // Fallback
   );
 }
 
+/**
+ * Validate request origin for CORS security
+ * Prevents unauthorized domains from using our upload API
+ * @param {string} origin - Request origin header
+ * @returns {boolean} Whether origin is allowed
+ */
 function isValidOrigin(origin) {
   const allowedOrigins = [
-    process.env.ALLOWED_ORIGIN,
-    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
-    "http://localhost:3000", // Development
-    "https://localhost:3000",
-  ].filter(Boolean);
+    process.env.ALLOWED_ORIGIN,                                    // Custom allowed origin
+    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null, // Vercel preview URLs
+    "http://localhost:3000",                                       // Local development
+    "https://localhost:3000",                                      // Local development with HTTPS
+  ].filter(Boolean); // Remove null/undefined values
 
+  // Allow requests with no origin (like direct API calls) or valid origins
   return !origin || allowedOrigins.includes(origin);
 }
 
+/**
+ * Rate limiting implementation using sliding window
+ * Prevents abuse by limiting uploads per IP address
+ * @param {string} ip - Client IP address
+ * @returns {boolean} Whether request is within rate limits
+ */
 function rateLimitCheck(ip) {
   const now = Date.now();
-  const windowMs = 15 * 60 * 1000; // 15 minutes
-  const maxAttempts = 20; // 20 uploads per 15 min per IP
+  const windowMs = 15 * 60 * 1000; // 15 minute sliding window
+  const maxAttempts = 20;          // Maximum 20 uploads per IP per window
 
+  // Get existing attempts for this IP
   const attempts = rateLimitStore.get(ip) || [];
+
+  // Filter to only recent attempts within the time window
   const recentAttempts = attempts.filter((time) => now - time < windowMs);
 
+  // Check if limit exceeded
   if (recentAttempts.length >= maxAttempts) {
-    return false;
+    return false; // Rate limit exceeded
   }
 
+  // Add current attempt and update storage
   recentAttempts.push(now);
   rateLimitStore.set(ip, recentAttempts);
 
-  // Cleanup old entries periodically
+  // Periodically cleanup old entries (1% chance per request)
+  // This prevents memory leaks in long-running instances
   if (Math.random() < 0.01) {
-    // 1% chance
     cleanupRateLimit();
   }
 
-  return true;
+  return true; // Within rate limits
 }
 
+/**
+ * Cleanup expired rate limit entries
+ * Removes old data to prevent memory leaks
+ */
 function cleanupRateLimit() {
   const now = Date.now();
   const windowMs = 15 * 60 * 1000;
 
   for (const [ip, attempts] of rateLimitStore.entries()) {
+    // Filter to only recent attempts
     const recentAttempts = attempts.filter((time) => now - time < windowMs);
+
     if (recentAttempts.length === 0) {
+      // No recent attempts, remove IP entirely
       rateLimitStore.delete(ip);
     } else {
+      // Update with filtered attempts
       rateLimitStore.set(ip, recentAttempts);
     }
   }
 }
 
+/**
+ * Validate file type using magic numbers (file signatures)
+ * Prevents malicious files disguised with image extensions
+ * @param {Buffer} buffer - File content buffer
+ * @param {string} mimetype - Declared MIME type
+ * @returns {boolean} Whether file signature matches declared type
+ */
 function validateFileType(buffer, mimetype) {
-  // Check magic numbers
+  // Check each known file signature
   for (const [type, signature] of Object.entries(MAGIC_NUMBERS)) {
+    // Handle both image/jpeg and image/jpg MIME types
     if (
       type === mimetype ||
       (type === "image/jpeg" && mimetype === "image/jpg")
     ) {
+      // Check if file starts with expected signature bytes
       const matches = signature.every((byte, index) => buffer[index] === byte);
       if (matches) return true;
     }
   }
-  return false;
+  return false; // No matching signature found
 }
 
+/**
+ * Comprehensive file validation
+ * Performs multiple security checks on uploaded files
+ * @param {Object} file - Formidable file object
+ * @returns {boolean} True if file passes all validations
+ * @throws {Error} If validation fails
+ */
 async function validateFile(file) {
-  // Read first few bytes for magic number validation
+  // Read file content for analysis
   const buffer = fs.readFileSync(file.filepath);
-  const firstBytes = buffer.slice(0, 12);
+  const firstBytes = buffer.slice(0, 12); // Get first 12 bytes for magic number check
 
-  // Check file size
+  // 1. Check for empty files
   if (buffer.length === 0) {
     throw new Error("Empty file not allowed");
   }
 
-  // Check magic numbers
+  // 2. Validate file signature matches declared type
   if (!validateFileType(firstBytes, file.mimetype)) {
     throw new Error(
       "File type validation failed - file content doesn't match extension",
     );
   }
 
-  // Additional size validation
+  // 3. Enforce size limit (10MB max)
   if (buffer.length > 10 * 1024 * 1024) {
     throw new Error("File too large");
   }
 
-  // Check for suspicious patterns (basic)
+  // 4. Scan for suspicious content patterns
+  // Check first 1KB of file for common malicious patterns
   const suspicious = [
-    "<script",
-    "<?php",
-    "<%",
-    "javascript:",
-    "data:text/html",
+    "<script",      // JavaScript injection
+    "<?php",        // PHP code
+    "<%",           // ASP/JSP code
+    "javascript:",  // JavaScript URLs
+    "data:text/html", // HTML data URLs
   ];
 
   const fileContent = buffer.toString("utf8", 0, Math.min(buffer.length, 1024));
@@ -153,13 +219,18 @@ async function validateFile(file) {
     }
   }
 
-  return true;
+  return true; // All validations passed
 }
 
-// Get current usage from our analytics API
+/**
+ * Fetch current usage data from our analytics API
+ * Used to check if upload would exceed limits
+ * @returns {Object} Current usage data or conservative fallback
+ */
 async function getCurrentUsage() {
   try {
-    // Use a relative URL to call our own usage API
+    // Determine base URL for API call
+    // Handle both local development and Vercel deployment
     const baseUrl = process.env.VERCEL_URL
       ? `https://${process.env.VERCEL_URL}`
       : process.env.NEXTAUTH_URL || "http://localhost:3000";
@@ -169,7 +240,7 @@ async function getCurrentUsage() {
       headers: {
         "Content-Type": "application/json",
       },
-      signal: AbortSignal.timeout(15000), // 15 second timeout
+      signal: AbortSignal.timeout(15000), // 15 second timeout to prevent hanging
     });
 
     if (!response.ok) {
@@ -183,10 +254,11 @@ async function getCurrentUsage() {
   } catch (error) {
     console.error("Error fetching current usage:", error);
 
-    // Return conservative estimates on error to prevent overuse
+    // Return conservative estimates on error to prevent quota overruns
+    // Assumes 60% usage to err on the side of caution
     return {
       storage: {
-        currentGB: FREE_PLAN_LIMITS.STORAGE_GB * 0.6, // Assume 60% used
+        currentGB: FREE_PLAN_LIMITS.STORAGE_GB * 0.6,
         limit: FREE_PLAN_LIMITS.STORAGE_GB,
         percentage: 60,
         currentBytes: FREE_PLAN_LIMITS.STORAGE_GB * 0.6 * 1024 * 1024 * 1024,
@@ -206,24 +278,31 @@ async function getCurrentUsage() {
   }
 }
 
-// Check if usage is approaching limits
+/**
+ * Check if uploading a file would exceed usage limits
+ * Calculates projected usage after upload and compares to thresholds
+ * @param {number} fileSize - Size of file to upload in bytes
+ * @returns {Object} Usage check results with recommendations
+ */
 async function checkUsageLimits(fileSize = 0) {
   const currentUsage = await getCurrentUsage();
 
-  // Calculate projected usage after this upload
+  // Calculate what usage would be AFTER this upload
   const projectedStorageBytes =
     (currentUsage.storage.currentBytes || 0) + fileSize;
   const projectedStorageGB = projectedStorageBytes / (1024 * 1024 * 1024);
-  const projectedClassA = currentUsage.classA.currentValue + 1; // This upload counts as 1 Class A operation
+  const projectedClassA = currentUsage.classA.currentValue + 1; // Each upload = 1 Class A operation
 
+  // Convert to percentages for comparison
   const storagePercentage =
     (projectedStorageGB / FREE_PLAN_LIMITS.STORAGE_GB) * 100;
   const classAPercentage =
     (projectedClassA / FREE_PLAN_LIMITS.CLASS_A_OPERATIONS) * 100;
-  const classBPercentage = currentUsage.classB.percentage; // No change for Class B
+  const classBPercentage = currentUsage.classB.percentage; // No change for reads
 
+  // Check which limits would be exceeded
   const exceeded = [];
-  const threshold = USAGE_THRESHOLD * 100; // Convert to percentage
+  const threshold = USAGE_THRESHOLD * 100; // Convert 0.5 to 50%
 
   if (storagePercentage > threshold) {
     exceeded.push(`Storage (${storagePercentage.toFixed(1)}%)`);
@@ -236,8 +315,8 @@ async function checkUsageLimits(fileSize = 0) {
   }
 
   return {
-    canUpload: exceeded.length === 0,
-    exceededLimits: exceeded,
+    canUpload: exceeded.length === 0,           // Can upload if no limits exceeded
+    exceededLimits: exceeded,                   // List of exceeded limits
     usage: {
       storage: {
         current: currentUsage.storage.percentage,
@@ -259,97 +338,114 @@ async function checkUsageLimits(fileSize = 0) {
         limit: FREE_PLAN_LIMITS.CLASS_B_OPERATIONS,
       },
     },
-    analyticsError: currentUsage.error,
-    shouldBlockUploads: currentUsage.shouldBlockUploads,
+    analyticsError: currentUsage.error,         // Any errors from analytics API
+    shouldBlockUploads: currentUsage.shouldBlockUploads, // Backend recommendation
   };
 }
 
+/**
+ * Vercel configuration to disable built-in body parser
+ * We use formidable for multipart form parsing instead
+ */
 export const config = {
   api: {
-    bodyParser: false,
+    bodyParser: false, // Disable default parser for file uploads
   },
 };
 
+/**
+ * Main upload handler function
+ * Processes file uploads with comprehensive security and usage checks
+ * @param {Object} req - HTTP request object
+ * @param {Object} res - HTTP response object
+ */
 export default async function handler(req, res) {
-  const startTime = Date.now();
-  const clientIP = getClientIP(req);
-  const userAgent = req.headers["user-agent"] || "unknown";
-  const origin = req.headers.origin;
+  const startTime = Date.now();               // Track processing time
+  const clientIP = getClientIP(req);          // Extract client IP
+  const userAgent = req.headers["user-agent"] || "unknown"; // User agent for logging
+  const origin = req.headers.origin;         // Request origin for CORS
 
-  // Security headers
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("X-XSS-Protection", "1; mode=block");
-  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  // Set security headers to prevent various attacks
+  res.setHeader("X-Content-Type-Options", "nosniff");              // Prevent MIME sniffing
+  res.setHeader("X-Frame-Options", "DENY");                        // Prevent clickjacking
+  res.setHeader("X-XSS-Protection", "1; mode=block");              // XSS protection
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin"); // Limit referrer info
 
   try {
-    // Method validation
+    // ==================== SECURITY VALIDATIONS ====================
+
+    // 1. Only allow POST requests
     if (req.method !== "POST") {
       return res.status(405).json({ error: "Method Not Allowed" });
     }
 
-    // Origin validation
+    // 2. Validate request origin (CORS protection)
     if (!isValidOrigin(origin)) {
       console.warn(`Invalid origin attempt: ${origin} from IP: ${clientIP}`);
       return res.status(403).json({ error: "Forbidden - Invalid origin" });
     }
 
-    // Rate limiting
+    // 3. Rate limiting check
     if (!rateLimitCheck(clientIP)) {
       console.warn(`Rate limit exceeded for IP: ${clientIP}`);
       return res.status(429).json({
         error: "Rate limit exceeded",
         message: "Too many upload attempts. Please wait before trying again.",
-        retryAfter: 900, // 15 minutes
+        retryAfter: 900, // 15 minutes in seconds
       });
     }
 
-    // Content-Length validation
+    // 4. Content-Length validation (prevent oversized requests)
     const contentLength = parseInt(req.headers["content-length"] || "0");
-    if (contentLength > 12 * 1024 * 1024) {
-      // 12MB to account for multipart overhead
+    if (contentLength > 12 * 1024 * 1024) { // 12MB allows for multipart overhead
       return res.status(413).json({ error: "Request too large" });
     }
 
-    // Parse form data
+    // ==================== FILE PROCESSING ====================
+
+    // Parse multipart form data with security limits
     const form = formidable({
-      maxFileSize: 10 * 1024 * 1024,
-      maxFields: 5, // Limit number of fields
-      maxFieldsSize: 2 * 1024, // 2KB for non-file fields
-      keepExtensions: true,
-      allowEmptyFiles: false,
+      maxFileSize: 10 * 1024 * 1024, // 10MB max file size
+      maxFields: 5,                   // Limit form fields to prevent DoS
+      maxFieldsSize: 2 * 1024,        // 2KB max for non-file fields
+      keepExtensions: true,           // Preserve file extensions
+      allowEmptyFiles: false,         // Reject empty files
     });
 
     const [fields, files] = await form.parse(req);
 
-    // File validation
+    // Extract uploaded file
     const file = files.file?.[0];
     if (!file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
-    // Basic file validation
+    // ==================== FILE VALIDATION ====================
+
+    // 1. Basic MIME type check
     if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
-      fs.unlinkSync(file.filepath);
+      fs.unlinkSync(file.filepath); // Clean up temp file
       return res.status(400).json({ error: "Invalid file type" });
     }
 
-    // Advanced file validation
+    // 2. Advanced file validation (magic numbers, content scanning)
     try {
       await validateFile(file);
     } catch (validationError) {
-      fs.unlinkSync(file.filepath);
+      fs.unlinkSync(file.filepath); // Clean up temp file
       console.warn(
         `File validation failed for IP ${clientIP}: ${validationError.message}`,
       );
       return res.status(400).json({ error: validationError.message });
     }
 
-    // Check usage limits BEFORE uploading
+    // ==================== USAGE LIMIT CHECKS ====================
+
+    // Check if upload would exceed R2 usage limits
     const usageCheck = await checkUsageLimits(file.size);
 
     if (!usageCheck.canUpload || usageCheck.shouldBlockUploads) {
-      fs.unlinkSync(file.filepath);
+      fs.unlinkSync(file.filepath); // Clean up temp file
       return res.status(429).json({
         error: "Upload blocked due to usage limits",
         message:
@@ -365,10 +461,12 @@ export default async function handler(req, res) {
       });
     }
 
+    // ==================== FILE PROCESSING & UPLOAD ====================
+
     // Generate secure filename
     const fileExtension = file.originalFilename.split(".").pop().toLowerCase();
 
-    // Validate extension against mimetype
+    // Validate file extension matches MIME type (additional security)
     const validExtensions = {
       "image/jpeg": ["jpg", "jpeg"],
       "image/png": ["png"],
@@ -383,62 +481,68 @@ export default async function handler(req, res) {
         .json({ error: "File extension doesn't match content type" });
     }
 
+    // Generate cryptographically secure random filename
     const filename = crypto.randomUUID() + "." + fileExtension;
 
-    // Upload to R2
+    // Read file content for upload
     const fileBuffer = fs.readFileSync(file.filepath);
 
+    // Upload to Cloudflare R2 using S3-compatible API
     await s3.send(
       new PutObjectCommand({
-        Bucket: process.env.R2_BUCKET,
-        Key: filename,
-        Body: fileBuffer,
-        ContentType: file.mimetype,
-        Metadata: {
+        Bucket: process.env.R2_BUCKET,    // R2 bucket name
+        Key: filename,                    // Object key (filename)
+        Body: fileBuffer,                 // File content
+        ContentType: file.mimetype,       // Set correct MIME type
+        Metadata: {                       // Custom metadata for tracking
           "upload-ip": clientIP,
           "upload-time": new Date().toISOString(),
-          "original-name": file.originalFilename.substring(0, 100), // Truncate for safety
+          "original-name": file.originalFilename.substring(0, 100), // Truncated for safety
           "file-size": file.size.toString(),
         },
       }),
     );
 
-    // Clean up temp file
+    // Clean up temporary file
     fs.unlinkSync(file.filepath);
 
-    // Construct public URL
+    // ==================== RESPONSE GENERATION ====================
+
+    // Construct public URL using custom domain
     const publicUrl = `https://${process.env.R2_CUSTOM_DOMAIN}/${filename}`;
 
-    // Log successful upload
+    // Log successful upload for monitoring
     console.log(
       `Upload successful: ${filename} (${file.size} bytes) from IP: ${clientIP}`,
     );
 
-    // Get updated usage after upload (optional, for response)
+    // Optionally fetch updated usage data for response
     let updatedUsage = null;
     try {
-      // Small delay to allow analytics to process
+      // Small delay to allow analytics to process the new upload
       await new Promise((resolve) => setTimeout(resolve, 1000));
       updatedUsage = await getCurrentUsage();
     } catch (error) {
       console.warn("Failed to fetch updated usage:", error);
     }
 
-    // Return response
+    // Determine if we're in production (affects debug info)
     const isProduction = process.env.NODE_ENV === "production";
 
+    // Return success response
     return res.status(200).json({
       url: publicUrl,
       message: "Upload successful",
       usage: updatedUsage
         ? {
+            // Format usage data for display
             storage: `${updatedUsage.storage.percentage.toFixed(1)}% (${updatedUsage.storage.currentGB}GB of ${updatedUsage.storage.limit}GB)`,
             classA: `${updatedUsage.classA.percentage.toFixed(1)}% (${updatedUsage.classA.currentValue.toLocaleString()} of ${updatedUsage.classA.limit.toLocaleString()})`,
             classB: `${updatedUsage.classB.percentage.toFixed(1)}% (${updatedUsage.classB.currentValue.toLocaleString()} of ${updatedUsage.classB.limit.toLocaleString()})`,
             lastUpdated: updatedUsage.lastUpdated,
           }
-        : usageCheck.usage,
-      // Only include debug info in development
+        : usageCheck.usage, // Fallback to pre-upload usage data
+      // Include debug information in development only
       ...(!isProduction && {
         debug: {
           filename,
@@ -455,9 +559,11 @@ export default async function handler(req, res) {
       }),
     });
   } catch (error) {
+    // ==================== ERROR HANDLING ====================
+
     console.error(`Upload error from IP ${clientIP}:`, error);
 
-    // Clean up any temp files
+    // Clean up any remaining temporary files
     try {
       if (req.files?.file?.[0]?.filepath) {
         fs.unlinkSync(req.files.file[0].filepath);
@@ -466,12 +572,13 @@ export default async function handler(req, res) {
       console.error("Cleanup error:", cleanupError);
     }
 
+    // Return appropriate error response
     return res.status(500).json({
       error: "Upload failed",
       message:
         process.env.NODE_ENV === "production"
-          ? "Internal server error"
-          : error.message,
+          ? "Internal server error"     // Hide details in production
+          : error.message,              // Show details in development
     });
   }
 }

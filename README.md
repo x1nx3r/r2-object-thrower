@@ -1,315 +1,231 @@
-# ✨ Cloudflare R2 Uploader
+# Cloudflare R2 Uploader
 
-A beautiful, modern file uploader with real-time usage tracking for Cloudflare R2 storage. Built with React, Vite, and Tailwind CSS, featuring automatic usage limits to prevent overages on the free tier. It uses vercel function as a pseudo-backend for the upload functionality and Cloudflare KV to track the usage (CAUTION: the usage tracker is too janky it might not work as intended.)
+A file uploader that somehow works despite being built by someone who clearly has better things to do. It uploads images to Cloudflare R2 and tries really hard not to bankrupt you with overage charges. Built with React because apparently that's what we do now, and Vercel functions because serverless is the future or whatever.
 
-## 🚀 Features
+## What This Thing Actually Does
 
-### 📁 **File Upload**
-- ✅ Image format support (JPEG, PNG, GIF, WebP)
-- ✅ 10MB file size limit
-- ✅ Real-time upload progress
-- ✅ Secure random UUID filenames
+Look, it's a file uploader. You drag an image, it goes to the cloud, you get a URL. The revolutionary part is that it actually tells you how much of your free tier you've burned through before Cloudflare starts asking for your firstborn.
 
-### 📊 **Usage Tracking**
-- ✅ Real-time R2 usage monitoring
-- ✅ Storage, Class A, and Class B operation tracking
-- ✅ Automatic monthly reset
-- ✅ 50% usage threshold protection
-- ✅ Visual progress bars with color coding
+### File Upload (The Basic Stuff)
+- Accepts images because that's what everyone uploads anyway
+- 10MB limit because nobody needs to upload their 4K vacation photos
+- Progress bars that move and make you feel like something important is happening
+- Random filenames so your `cat.jpg` becomes `3f2a8b9c-dead-beef-cafe-babedeadbeef.jpg`
 
-### 🎨 **Beautiful UI**
-- ✅ Tailwind CSS styling
-- ✅ Smooth animations and transitions
-- ✅ Responsive mobile-friendly layout
+### Usage Tracking (The Actually Useful Part)
+- Shows you exactly how close you are to paying Cloudflare real money
+- Tracks storage, reads, and writes separately because they're all limited differently for some reason
+- Blocks uploads at 50% usage because 100% would be expensive and 80% would be stressful
+- Monthly reset that may or may not work depending on timezone shenanigans
 
-### ⚡ **Performance**
-- ✅ Cloudflare Workers for edge computing
-- ✅ KV storage for fast usage tracking
-- ✅ Optimized for Vercel deployment
-- ✅ Minimal bundle size
+### UI (It Looks Pretty I Guess)
+- Tailwind CSS because writing actual CSS is for people with time
+- Smooth animations that serve no functional purpose but feel nice
+- Works on mobile because apparently people upload files from phones now
+- Dark mode nowhere to be found because I ran out of caring
 
-## 🏗️ Architecture
+### Performance (Mostly Not Terrible)
+- Cloudflare edge computing for the one person using this from Antarctica
+- Vercel functions that cold start exactly when you don't want them to
+- GraphQL Analytics API that sometimes works and sometimes doesn't
+- Bundle size optimized through the ancient art of not including things
+
+## Architecture (Or: How Many Services Can We Chain Together)
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   React App     │    │  Vercel API     │    │ Cloudflare R2   │
-│   (Frontend)    │───▶│   (Backend)     │───▶│   (Storage)     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │
-         └───────────────────────┼─────────────────────────────────┐
-                                 ▼                                 ▼
-                    ┌─────────────────┐              ┌─────────────────┐
-                    │ Cloudflare      │              │ Cloudflare KV   │
-                    │ Worker          │─────────────▶│ (Usage Data)    │
-                    │ (Usage API)     │              │                 │
-                    └─────────────────┘              └─────────────────┘
+Your Browser -> Vercel API -> Cloudflare R2
+     |              |
+     |              v
+     +-----> Cloudflare GraphQL Analytics API
 ```
 
-## 🛠️ Tech Stack
+Three services to upload a file. This is modern web development.
 
-- **Frontend**: React 18, Vite, Tailwind CSS
-- **Backend**: Vercel Functions (Node.js)
-- **Storage**: Cloudflare R2
-- **CDN**: Cloudflare (custom domain)
-- **Usage Tracking**: Cloudflare Workers + KV
-- **Deployment**: Vercel + Cloudflare
+## Tech Stack (Resume Keyword Bingo)
 
-## 📋 Prerequisites
+- Frontend: React 18 (because 17 is so last year), Vite (webpack is dead), Tailwind CSS (utility-first means never having to say you're sorry)
+- Backend: Vercel Functions running Node.js in a container somewhere
+- Storage: Cloudflare R2 pretending to be Amazon S3
+- Analytics: Cloudflare's GraphQL API that may or may not be having a good day
+- Deployment: Vercel because clicking deploy is easier than understanding servers
 
-- Node.js 18+ and npm/pnpm
-- Cloudflare account
-- Vercel account
-- Custom domain (optional but recommended)
+## Prerequisites (Things You Need Before You Can Be Disappointed)
 
-## ⚙️ Installation
+- Node.js 18+ because 16 is deprecated and 20 isn't stable enough
+- A Cloudflare account and the patience to navigate their dashboard
+- A Vercel account because who hosts things themselves anymore
+- Basic understanding that nothing ever works on the first try
 
-### 1. Clone and Install
+## Installation (Good Luck)
+
+### Step 1: Clone This Mess
 ```bash
 git clone https://github.com/yourusername/r2-object-thrower.git
 cd r2-object-thrower
 npm install
+# pray to whatever deity handles dependency resolution
 ```
 
-### 2. Environment Setup
-Create `.env.local`:
+### Step 2: Environment Variables (The Fun Part)
+Create `.env.local` and fill it with secrets:
 ```env
-# R2 Configuration
+# R2 Configuration (Get these from Cloudflare's maze of a dashboard)
 R2_ACCESS_KEY=your_r2_access_key
-R2_SECRET_KEY=your_r2_secret_key
+R2_SECRET_KEY=your_r2_secret_key_thats_definitely_not_in_git_right
 R2_BUCKET=your_bucket_name
-R2_ENDPOINT=https://account-id.r2.cloudflarestorage.com/bucket-name
+R2_ENDPOINT=https://your-account-id.r2.cloudflarestorage.com
 R2_REGION=auto
 R2_CUSTOM_DOMAIN=cdn.yourdomain.com
 
-# Cloudflare
-CLOUDFLARE_ACCOUNT_ID=your_account_id
-
-# Worker Configuration
-CF_WORKER_SECRET=your_worker_api_secret
-CF_WORKER_URL=https://r2-usage-tracker.your-subdomain.workers.dev
+# Cloudflare Analytics (For the masochists)
+CLOUDFLARE_EMAIL=your_email@example.com
+CLOUDFLARE_GLOBAL_API_KEY=your_global_api_key_that_has_way_too_much_power
+CLOUDFLARE_ACCOUNT_ID=your_32_character_account_id_not_31_not_33
+CLOUDFLARE_BUCKET_NAME=same_as_above_but_again_for_reasons
 ```
 
-### 3. Deploy Cloudflare Worker
-```bash
-cd worker
-npm install -g wrangler
-wrangler login
-wrangler kv:namespace create "R2_USAGE_TRACKER"
-wrangler deploy
-```
-
-### 4. Deploy to Vercel
+### Step 3: Deploy to Vercel (Cross Your Fingers)
 ```bash
 vercel --prod
+# watch it fail because you forgot to set environment variables
+# set environment variables in dashboard
+# deploy again
+# repeat until it works or you give up
 ```
 
-## 🔧 Configuration
+## Configuration (More Ways to Break Things)
 
 ### Cloudflare R2 Setup
-1. Create R2 bucket in Cloudflare dashboard
-2. Generate R2 API tokens with read/write permissions
-3. Set up custom domain for CDN (optional)
+1. Navigate Cloudflare's dashboard UI that changes every month
+2. Create a bucket with a name you'll immediately forget
+3. Generate API tokens with exactly the right permissions (good luck)
+4. Set up a custom domain if you hate yourself
 
-### Worker KV Setup
-1. Create KV namespace: `R2_USAGE_TRACKER`
-2. Update `worker/wrangler.toml` with namespace ID
-3. Set API secret in worker environment
+### Usage Limits (The Important Part)
+The app blocks uploads at 50% of free tier limits because paying for cloud storage is for people with disposable income:
 
-### Usage Limits
-Edit limits in `api/upload.js`:
 ```js
 const FREE_PLAN_LIMITS = {
-  STORAGE_GB: 10,              // 10GB storage
-  CLASS_A_OPERATIONS: 1_000_000,   // 1M Class A ops
-  CLASS_B_OPERATIONS: 10_000_000,  // 10M Class B ops
+  STORAGE_GB: 10,              // 10GB total storage
+  CLASS_A_OPERATIONS: 1_000_000,   // 1M write operations
+  CLASS_B_OPERATIONS: 10_000_000,  // 10M read operations
 };
 
-const USAGE_THRESHOLD = 0.5; // Block at 50% usage
+const USAGE_THRESHOLD = 0.5; // Block at 50% because 100% costs money
 ```
 
-## 🚀 Usage
+## Usage (What You Came Here For)
 
 ### Development
 ```bash
 npm run dev
+# navigate to localhost:3000
+# upload an image
+# watch it either work perfectly or fail spectacularly
 ```
 
-### Build
+### Production
 ```bash
 npm run build
+vercel --prod
+# hope your environment variables are right
+# they probably aren't
 ```
 
-### Deploy Worker
-```bash
-cd worker
-wrangler deploy
-```
+## API Documentation (For the Curious)
 
-## 📊 API Endpoints
-
-### Upload API (`/api/upload`)
+### Upload Endpoint
 ```bash
 POST /api/upload
-Content-Type: multipart/form-data
-
-# Response
-{
-  "url": "https://cdn.yourdomain.com/uuid.jpg",
-  "usage": {
-    "storage": "2.3% (0.23GB of 10GB)",
-    "classA": "0.1% (1,000 of 1,000,000)",
-    "classB": "0.05% (5,000 of 10,000,000)"
-  },
-  "tracking": {
-    "success": true,
-    "operation": "classA",
-    "fileSize": 1048576
-  }
-}
+# Send a file, get back a URL and some usage stats
+# Returns 429 if you're using too much free tier
+# Returns 500 if literally anything goes wrong
 ```
 
-### Usage API (`/api/usage`)
+### Usage Endpoint
 ```bash
 GET /api/usage
-
-# Response
-{
-  "usage": {
-    "storage": {
-      "currentGB": 0.23,
-      "limit": 10,
-      "percentage": 2.3
-    },
-    "classA": {
-      "currentValue": 1000,
-      "limit": 1000000,
-      "percentage": 0.1
-    },
-    "classB": {
-      "currentValue": 5000,
-      "limit": 10000000,
-      "percentage": 0.05
-    }
-  }
-}
+# Returns current usage or creative fiction if analytics are down
+# Probably accurate within 24 hours
 ```
 
-### Worker Endpoints
-```bash
-# Health check
-GET https://worker-url.workers.dev/health
+## Security (Somewhat Questionable)
 
-# Get usage
-GET https://worker-url.workers.dev/usage
+- File type validation using magic numbers because MIME types lie
+- Random UUID filenames because security through obscurity is still security
+- Rate limiting that resets when the server restarts
+- Input validation that probably has edge cases
+- CORS headers that may or may not be configured correctly
 
-# Increment counter (requires auth)
-POST https://worker-url.workers.dev/increment
-Authorization: Bearer your-secret
-{
-  "operation": "classA",
-  "fileSize": 1048576
-}
+## Customization (Make It Your Own Disaster)
 
-# Reset counters (requires auth)
-POST https://worker-url.workers.dev/reset
-Authorization: Bearer your-secret
-```
-
-## 🔒 Security Features
-
-- **Random UUID filenames** - Prevents file enumeration
-- **File type validation** - Only allows images
-- **Size limits** - 10MB maximum file size
-- **Usage limits** - Prevents R2 overage charges
-- **API authentication** - Worker endpoints protected
-- **CORS headers** - Secure cross-origin requests
-
-## 🎨 Customization
-
-### Styling
-- Edit `src/index.css` for custom styles
-- Modify Tailwind classes in components
-- Update color schemes and animations
-
-### File Types
-Add support for more file types in `api/upload.js`:
+Want to support more file types? Add them to the list and hope your validation logic holds up:
 ```js
-const allowedTypes = [
+const ALLOWED_MIME_TYPES = [
   "image/jpeg",
   "image/png",
   "image/gif",
   "image/webp",
-  "application/pdf", // Add PDF support
-  "text/plain"       // Add text files
+  // "application/pdf", // uncomment if you hate yourself
 ];
 ```
 
-### Usage Limits
-Adjust thresholds and limits based on your needs:
+Want different usage limits? Change the numbers and pray:
 ```js
-const USAGE_THRESHOLD = 0.8; // Block at 80% instead of 50%
+const USAGE_THRESHOLD = 0.8; // live dangerously
 ```
 
-## 📈 Monitoring
+## Monitoring (Watching Things Break)
 
-### Usage Dashboard
-- Real-time usage display in the app
-- Color-coded progress bars
-- Monthly automatic reset
-- Usage warnings at 40%
+The app shows real-time usage that's accurate most of the time. Green bars mean you're fine, yellow means you're getting close, red means you should probably stop uploading cat photos for a while.
 
-### Logs
-- Vercel function logs for upload operations
-- Cloudflare Worker logs for usage tracking
-- Console logging for debugging
+Error logs are scattered across:
+- Vercel function logs (for upload failures)
+- Browser console (for frontend explosions)
+- Cloudflare dashboard (for everything else)
 
-## 🐛 Troubleshooting
+## Troubleshooting (When It All Goes Wrong)
 
-### Common Issues
+**Upload fails immediately:**
+- Check your R2 credentials aren't expired
+- Verify the bucket exists and you can spell its name
+- Make sure your file is actually an image
 
-**Upload fails with 500 error:**
-- Check R2 credentials in environment variables
-- Verify bucket exists and is accessible
-- Check Vercel function logs
+**Usage tracking returns zeros:**
+- Cloudflare's analytics API is having a moment
+- Your account ID is probably wrong (common mistake)
+- The GraphQL endpoint is down (less common but possible)
 
-**Usage tracking not working:**
-- Verify worker is deployed and accessible
-- Check worker API secret matches
-- Test worker endpoints directly
+**Everything is broken:**
+- Clear your browser cache
+- Restart the dev server
+- Question your life choices
+- Try again tomorrow
 
-**CORS errors:**
-- Ensure worker has proper CORS headers
-- Check domain configuration
+**CORS errors everywhere:**
+- Check your environment variables
+- Verify your domain configuration
+- Accept that CORS was a mistake
 
-### Debug Mode
-Enable debug logging:
-```js
-// In api/upload.js
-console.log("Debug info:", {
-  workerUrl: process.env.CF_WORKER_URL,
-  workerConfigured: !!(process.env.CF_WORKER_URL && process.env.CF_WORKER_SECRET)
-});
-```
+## Contributing (If You're Brave Enough)
 
-## 📝 Contributing
+1. Fork this repository
+2. Create a branch with a reasonable name
+3. Make your changes work locally
+4. Test on at least two browsers
+5. Write a commit message that explains what you actually did
+6. Open a pull request and wait
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+## License
 
-## 📄 License
+MIT License because who has time to care about copyright. Use it, break it, fix it, sell it, whatever. Just don't blame me when it doesn't work.
 
-MIT License - see [LICENSE](LICENSE) file for details.
+## Final Notes
 
-## 🙏 Acknowledgments
+This project exists because I needed to upload files somewhere and didn't want to pay for storage. It works well enough for my needs and maybe yours too. The code could be better, the architecture could be simpler, and the documentation could be more professional. But it's 3 AM and this works, so here we are.
 
-- [Cloudflare R2](https://developers.cloudflare.com/r2/) for excellent object storage
-- [Vercel](https://vercel.com/) for seamless deployment
-- [Tailwind CSS](https://tailwindcss.com/) for beautiful styling
-- [Vite](https://vitejs.dev/) for fast development experience
+If you use this and it saves you money or time, great. If it breaks your production system, that's between you and your deployment process. If you find bugs, feel free to fix them or just live with them like the rest of us.
 
----
+The usage tracking relies on Cloudflare's analytics API which is generally reliable but sometimes returns creative interpretations of reality. The 50% safety margin exists for a reason.
 
-**Star ⭐ this repo if it helped you!**
+Good luck.

@@ -1,27 +1,45 @@
+// api/usage.js
+
+// Cloudflare R2 Free Plan limits - these are the monthly quotas
 const FREE_PLAN_LIMITS = {
-  STORAGE_GB: 10,
-  CLASS_A_OPERATIONS: 1_000_000,
-  CLASS_B_OPERATIONS: 10_000_000,
+  STORAGE_GB: 10, // 10GB storage limit
+  CLASS_A_OPERATIONS: 1_000_000, // 1M Class A operations (writes/lists)
+  CLASS_B_OPERATIONS: 10_000_000, // 10M Class B operations (reads)
 };
 
+/**
+ * CloudflareAnalytics Class
+ * Handles communication with Cloudflare's GraphQL Analytics API
+ * Uses Global API Key authentication method for reliable access
+ */
 class CloudflareAnalytics {
   constructor(email, globalApiKey, accountId) {
-    this.email = email;
-    this.globalApiKey = globalApiKey;
-    this.accountId = accountId;
-    this.endpoint = "https://api.cloudflare.com/client/v4/graphql";
+    this.email = email; // Cloudflare account email
+    this.globalApiKey = globalApiKey; // Global API key for authentication
+    this.accountId = accountId; // Cloudflare account ID
+    this.endpoint = "https://api.cloudflare.com/client/v4/graphql"; // GraphQL endpoint
   }
 
+  /**
+   * Fetches R2 operation usage data for the current month
+   * Operations include PUT, GET, LIST, DELETE etc.
+   * @param {string} bucketName - R2 bucket name to filter by (optional)
+   * @param {number} days - Legacy parameter, not used (kept for compatibility)
+   * @returns {Object} GraphQL response data
+   */
   async getR2OperationsUsage(bucketName, days = 30) {
+    // These variables are defined but not used - left for potential future use
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
-    // Use first of current month for operations (like in the example)
+    // Calculate first day of current month - this aligns with R2 billing cycle
     const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
+    monthStart.setDate(1); // Set to 1st day of current month
+    monthStart.setHours(0, 0, 0, 0); // Set to midnight for precise start time
 
+    // GraphQL query to fetch R2 operations data
+    // Groups operations by actionType and sums the requests
     const query = `{
       viewer {
         accounts(filter: { accountTag: "${this.accountId}" }) {
@@ -46,12 +64,20 @@ class CloudflareAnalytics {
     return this.executeGraphQLQuery(query);
   }
 
+  /**
+   * Fetches R2 storage usage data for the current month
+   * Includes object count, payload size, and metadata size
+   * @param {string} bucketName - R2 bucket name to filter by (optional)
+   * @returns {Object} GraphQL response data
+   */
   async getR2StorageUsage(bucketName) {
-    // Use first of current month for storage (like in the example)
+    // Use first of current month for storage (same as operations for consistency)
     const monthStart = new Date();
     monthStart.setDate(1);
     monthStart.setHours(0, 0, 0, 0);
 
+    // GraphQL query to fetch R2 storage data
+    // Orders by datetime DESC to get the most recent values first
     const query = `{
       viewer {
         accounts(filter: { accountTag: "${this.accountId}" }) {
@@ -64,13 +90,13 @@ class CloudflareAnalytics {
             orderBy: [datetime_DESC]
           ) {
             max {
-              objectCount
-              uploadCount
-              payloadSize
-              metadataSize
+              objectCount    // Number of objects stored
+              uploadCount    // Number of uploads
+              payloadSize    // Actual file content size in bytes
+              metadataSize   // Object metadata size in bytes
             }
             dimensions {
-              datetime
+              datetime       // Timestamp of the data point
             }
           }
         }
@@ -80,11 +106,19 @@ class CloudflareAnalytics {
     return this.executeGraphQLQuery(query);
   }
 
+  /**
+   * Executes a GraphQL query against Cloudflare's API
+   * Uses X-AUTH-EMAIL and X-AUTH-KEY headers for authentication
+   * @param {string} query - GraphQL query string
+   * @returns {Object} Parsed response data
+   * @throws {Error} If request fails or returns errors
+   */
   async executeGraphQLQuery(query) {
     try {
       const response = await fetch(this.endpoint, {
         method: "POST",
         headers: {
+          // Global API Key authentication method
           "X-AUTH-EMAIL": this.email,
           "X-AUTH-KEY": this.globalApiKey,
           "Content-Type": "application/json",
@@ -92,6 +126,7 @@ class CloudflareAnalytics {
         body: JSON.stringify({ query }),
       });
 
+      // Check if HTTP request was successful
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(
@@ -101,6 +136,7 @@ class CloudflareAnalytics {
 
       const result = await response.json();
 
+      // Check if GraphQL returned any errors
       if (result.errors) {
         throw new Error(`GraphQL errors: ${JSON.stringify(result.errors)}`);
       }
@@ -112,6 +148,12 @@ class CloudflareAnalytics {
     }
   }
 
+  /**
+   * Processes raw operations data from GraphQL response
+   * Categorizes operations into Class A (expensive) and Class B (cheap)
+   * @param {Object} data - Raw GraphQL response data
+   * @returns {Object} Processed operation counts {classA: number, classB: number}
+   */
   processOperationsData(data) {
     const accounts = data?.viewer?.accounts;
     if (!accounts || accounts.length === 0) {
@@ -120,41 +162,46 @@ class CloudflareAnalytics {
 
     const operations = accounts[0].r2OperationsAdaptiveGroups;
 
-    // Define operation types based on the example
+    // Class A operations - more expensive, lower limits
+    // These are write, delete, and list operations
     const classA = [
-      "ListBuckets",
-      "PutBucket",
-      "ListObjects",
-      "PutObject",
-      "CopyObject",
-      "CompleteMultipartUpload",
-      "CreateMultipartUpload",
-      "ListMultipartUploads",
-      "UploadPart",
-      "UploadPartCopy",
-      "ListParts",
-      "PutBucketEncryption",
-      "PutBucketCors",
-      "PutBucketLifecycleConfiguration",
-      "DeleteObject",
+      "ListBuckets", // List all buckets
+      "PutBucket", // Create bucket
+      "ListObjects", // List objects in bucket
+      "PutObject", // Upload/write object
+      "CopyObject", // Copy object
+      "CompleteMultipartUpload", // Finish multipart upload
+      "CreateMultipartUpload", // Start multipart upload
+      "ListMultipartUploads", // List ongoing multipart uploads
+      "UploadPart", // Upload part of multipart
+      "UploadPartCopy", // Copy part in multipart
+      "ListParts", // List parts of multipart
+      "PutBucketEncryption", // Set bucket encryption
+      "PutBucketCors", // Set bucket CORS
+      "PutBucketLifecycleConfiguration", // Set lifecycle rules
+      "DeleteObject", // Delete object
     ];
 
+    // Class B operations - cheaper, higher limits
+    // These are read and metadata operations
     const classB = [
-      "HeadBucket",
-      "HeadObject",
-      "GetObject",
-      "UsageSummary",
-      "GetBucketEncryption",
-      "GetBucketLocation",
-      "GetBucketCors",
-      "GetBucketLifecycleConfiguration",
+      "HeadBucket", // Check if bucket exists
+      "HeadObject", // Get object metadata
+      "GetObject", // Download/read object
+      "UsageSummary", // Get usage statistics
+      "GetBucketEncryption", // Get bucket encryption settings
+      "GetBucketLocation", // Get bucket location
+      "GetBucketCors", // Get bucket CORS settings
+      "GetBucketLifecycleConfiguration", // Get lifecycle configuration
     ];
 
+    // Initialize counters
     const operationCounts = {
       classA: 0,
       classB: 0,
     };
 
+    // Process each operation and categorize it
     operations.forEach((op) => {
       const actionType = op.dimensions.actionType;
       const requests = op.sum.requests || 0;
@@ -164,11 +211,18 @@ class CloudflareAnalytics {
       } else if (classB.includes(actionType)) {
         operationCounts.classB += requests;
       }
+      // Note: Unknown operation types are ignored
     });
 
     return operationCounts;
   }
 
+  /**
+   * Processes raw storage data from GraphQL response
+   * Extracts the most recent storage metrics
+   * @param {Object} data - Raw GraphQL response data
+   * @returns {Object} Processed storage data
+   */
   processStorageData(data) {
     const accounts = data?.viewer?.accounts;
     if (!accounts || accounts.length === 0) {
@@ -181,14 +235,15 @@ class CloudflareAnalytics {
       return { totalBytes: 0, objectCount: 0 };
     }
 
-    // Get the most recent data point (should be the latest/largest values)
+    // Get the most recent data point (ordered by datetime DESC)
+    // This gives us the current storage state
     const latestData = storageGroups[0];
-    const payloadSize = latestData.max.payloadSize || 0;
-    const metadataSize = latestData.max.metadataSize || 0;
-    const objectCount = latestData.max.objectCount || 0;
+    const payloadSize = latestData.max.payloadSize || 0; // Actual file content
+    const metadataSize = latestData.max.metadataSize || 0; // Object metadata
+    const objectCount = latestData.max.objectCount || 0; // Number of files
 
     return {
-      totalBytes: payloadSize + metadataSize,
+      totalBytes: payloadSize + metadataSize, // Combined storage usage
       objectCount: objectCount,
       payloadSize: payloadSize,
       metadataSize: metadataSize,
@@ -197,14 +252,20 @@ class CloudflareAnalytics {
   }
 }
 
-// Get comprehensive R2 usage from Cloudflare GraphQL Analytics API
+/**
+ * Main function to get comprehensive R2 usage data
+ * Fetches both operations and storage data in parallel
+ * @returns {Object} Complete usage data with error handling
+ */
 async function getR2Usage() {
   try {
+    // Load configuration from environment variables
     const email = process.env.CLOUDFLARE_EMAIL;
     const globalApiKey = process.env.CLOUDFLARE_GLOBAL_API_KEY;
     const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
     const bucketName = process.env.CLOUDFLARE_BUCKET_NAME;
 
+    // Validate required configuration
     if (!email || !globalApiKey || !accountId) {
       console.warn("Missing Cloudflare configuration");
       return {
@@ -219,14 +280,16 @@ async function getR2Usage() {
       "Fetching usage from Cloudflare GraphQL Analytics API (Global API Key method)",
     );
 
+    // Initialize analytics client
     const analytics = new CloudflareAnalytics(email, globalApiKey, accountId);
 
-    // Fetch both operations and storage data in parallel
+    // Fetch both operations and storage data simultaneously for better performance
     const [operationsData, storageData] = await Promise.all([
-      analytics.getR2OperationsUsage(bucketName), // Current month for operations
-      analytics.getR2StorageUsage(bucketName), // Current month for storage
+      analytics.getR2OperationsUsage(bucketName), // Current month operations
+      analytics.getR2StorageUsage(bucketName), // Current month storage
     ]);
 
+    // Process the raw data into usable format
     const operations = analytics.processOperationsData(operationsData);
     const storage = analytics.processStorageData(storageData);
 
@@ -235,8 +298,10 @@ async function getR2Usage() {
       storage,
     });
 
-    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM format
+    // Format current month for display (YYYY-MM)
+    const currentMonth = new Date().toISOString().slice(0, 7);
 
+    // Return structured usage data
     return {
       storageBytes: storage.totalBytes,
       objectCount: storage.objectCount,
@@ -252,7 +317,7 @@ async function getR2Usage() {
     };
   } catch (error) {
     console.error("Error fetching usage from Cloudflare Analytics:", error);
-    // Return safe fallback data on error
+    // Return safe fallback data on error to prevent app crashes
     return {
       storageBytes: 0,
       objectCount: 0,
@@ -264,7 +329,11 @@ async function getR2Usage() {
   }
 }
 
-// Test function for debugging
+/**
+ * Debug function to test Cloudflare authentication
+ * Useful for troubleshooting credential issues
+ * @returns {Object} Authentication test results
+ */
 async function testCloudflareAuth() {
   const email = process.env.CLOUDFLARE_EMAIL;
   const globalApiKey = process.env.CLOUDFLARE_GLOBAL_API_KEY;
@@ -275,6 +344,7 @@ async function testCloudflareAuth() {
   }
 
   try {
+    // Simple GraphQL query to test authentication
     const response = await fetch(
       "https://api.cloudflare.com/client/v4/graphql",
       {
@@ -318,22 +388,32 @@ async function testCloudflareAuth() {
   }
 }
 
+/**
+ * API Route Handler
+ * Main entry point for the /api/usage endpoint
+ * Supports GET requests and debug mode
+ */
 export default async function handler(req, res) {
+  // Only allow GET requests
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method Not Allowed" });
   }
 
-  // Debug endpoint
+  // Debug endpoint: /api/usage?debug=auth
+  // Tests authentication without fetching full usage data
   if (req.query.debug === "auth") {
     const authTest = await testCloudflareAuth();
     return res.status(200).json({ authTest });
   }
 
   try {
+    // Fetch current usage data
     const currentUsage = await getR2Usage();
 
-    // Calculate percentages
+    // Convert raw bytes to GB for storage calculation
     const storageGB = currentUsage.storageBytes / (1024 * 1024 * 1024);
+
+    // Calculate percentage usage for each limit
     const storagePercentage = (storageGB / FREE_PLAN_LIMITS.STORAGE_GB) * 100;
     const classAPercentage =
       (currentUsage.classAOperations / FREE_PLAN_LIMITS.CLASS_A_OPERATIONS) *
@@ -342,10 +422,11 @@ export default async function handler(req, res) {
       (currentUsage.classBOperations / FREE_PLAN_LIMITS.CLASS_B_OPERATIONS) *
       100;
 
-    // Determine if any limits are approaching critical levels
+    // Define thresholds for warnings and blocking
     const criticalThreshold = 80; // 80% threshold for warnings
     const blockingThreshold = 50; // 50% threshold for blocking uploads
 
+    // Generate warnings for high usage
     const warnings = [];
     if (storagePercentage >= criticalThreshold) {
       warnings.push(`Storage usage is at ${storagePercentage.toFixed(1)}%`);
@@ -357,11 +438,14 @@ export default async function handler(req, res) {
       warnings.push(`Class B operations at ${classBPercentage.toFixed(1)}%`);
     }
 
+    // Determine if uploads should be blocked
+    // Blocks at 50% to provide safety margin before hitting hard limits
     const shouldBlockUploads =
       storagePercentage >= blockingThreshold ||
       classAPercentage >= blockingThreshold ||
       classBPercentage >= blockingThreshold;
 
+    // Return structured response with usage data and debug information
     return res.status(200).json({
       usage: {
         storage: {
@@ -386,6 +470,7 @@ export default async function handler(req, res) {
         lastUpdated: currentUsage.lastUpdated,
         period: currentUsage.period,
       },
+      // Debug section helps troubleshoot configuration issues
       debug: {
         email: process.env.CLOUDFLARE_EMAIL ? "✓ Set" : "✗ Missing",
         globalApiKey: process.env.CLOUDFLARE_GLOBAL_API_KEY
@@ -401,6 +486,7 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error("Usage API error:", error);
+    // Return error response with configuration status
     return res.status(500).json({
       error: "Failed to fetch usage",
       message: error.message,
