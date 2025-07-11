@@ -287,7 +287,7 @@ export default async function handler(req, res) {
     fs.unlinkSync(file.filepath);
 
     // Generate public URL
-    const publicUrl = `https://${process.env.R2_CUSTOM_DOMAIN}/${filename}`;
+    const publicUrl = `https://${process.env.R2_CUSTOM_DOMAIN}/free-bucket/${filename}`;
 
     console.log(
       `Upload successful: ${filename} (${file.size} bytes) from IP: ${clientIP}`,
