@@ -40,6 +40,7 @@ class CloudflareAnalytics {
 
     // GraphQL query to fetch R2 operations data
     // Groups operations by actionType and sums the requests
+    // NOTE: GraphQL doesn't support // comments inside queries
     const query = `{
       viewer {
         accounts(filter: { accountTag: "${this.accountId}" }) {
@@ -78,6 +79,7 @@ class CloudflareAnalytics {
 
     // GraphQL query to fetch R2 storage data
     // Orders by datetime DESC to get the most recent values first
+    // NOTE: GraphQL doesn't support // comments inside queries
     const query = `{
       viewer {
         accounts(filter: { accountTag: "${this.accountId}" }) {
@@ -90,13 +92,13 @@ class CloudflareAnalytics {
             orderBy: [datetime_DESC]
           ) {
             max {
-              objectCount    // Number of objects stored
-              uploadCount    // Number of uploads
-              payloadSize    // Actual file content size in bytes
-              metadataSize   // Object metadata size in bytes
+              objectCount
+              uploadCount
+              payloadSize
+              metadataSize
             }
             dimensions {
-              datetime       // Timestamp of the data point
+              datetime
             }
           }
         }
@@ -345,6 +347,7 @@ async function testCloudflareAuth() {
 
   try {
     // Simple GraphQL query to test authentication
+    // NOTE: GraphQL doesn't support // comments inside queries
     const response = await fetch(
       "https://api.cloudflare.com/client/v4/graphql",
       {
@@ -356,13 +359,13 @@ async function testCloudflareAuth() {
         },
         body: JSON.stringify({
           query: `{
-          viewer {
-            accounts {
-              id
-              name
+            viewer {
+              accounts {
+                id
+                name
+              }
             }
-          }
-        }`,
+          }`,
         }),
       },
     );
@@ -394,6 +397,9 @@ async function testCloudflareAuth() {
  * Supports GET requests and debug mode
  */
 export default async function handler(req, res) {
+  // Set JSON content type immediately
+  res.setHeader("Content-Type", "application/json");
+
   // Only allow GET requests
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method Not Allowed" });
@@ -402,11 +408,69 @@ export default async function handler(req, res) {
   // Debug endpoint: /api/usage?debug=auth
   // Tests authentication without fetching full usage data
   if (req.query.debug === "auth") {
-    const authTest = await testCloudflareAuth();
-    return res.status(200).json({ authTest });
+    try {
+      const authTest = await testCloudflareAuth();
+      return res.status(200).json({ authTest });
+    } catch (error) {
+      console.error("Auth test error:", error);
+      return res.status(500).json({
+        error: "Auth test failed",
+        message: error.message,
+      });
+    }
   }
 
   try {
+    // Validate Cloudflare configuration
+    const requiredEnvVars = [
+      "CLOUDFLARE_EMAIL",
+      "CLOUDFLARE_GLOBAL_API_KEY",
+      "CLOUDFLARE_ACCOUNT_ID",
+    ];
+
+    const missingVars = requiredEnvVars.filter(
+      (varName) => !process.env[varName],
+    );
+    if (missingVars.length > 0) {
+      console.warn("Missing Cloudflare configuration:", missingVars);
+      return res.status(200).json({
+        usage: {
+          storage: {
+            currentGB: 0,
+            currentBytes: 0,
+            objectCount: 0,
+            limit: FREE_PLAN_LIMITS.STORAGE_GB,
+            percentage: 0,
+          },
+          classA: {
+            currentValue: 0,
+            limit: FREE_PLAN_LIMITS.CLASS_A_OPERATIONS,
+            percentage: 0,
+          },
+          classB: {
+            currentValue: 0,
+            limit: FREE_PLAN_LIMITS.CLASS_B_OPERATIONS,
+            percentage: 0,
+          },
+          warnings: [
+            `Configuration incomplete: missing ${missingVars.join(", ")}`,
+          ],
+          shouldBlockUploads: false,
+          lastUpdated: new Date().toISOString(),
+          period: "Configuration incomplete",
+        },
+        debug: {
+          email: process.env.CLOUDFLARE_EMAIL ? "✓ Set" : "✗ Missing",
+          globalApiKey: process.env.CLOUDFLARE_GLOBAL_API_KEY
+            ? "✓ Set"
+            : "✗ Missing",
+          accountId: process.env.CLOUDFLARE_ACCOUNT_ID || "✗ Missing",
+          bucketName: process.env.CLOUDFLARE_BUCKET_NAME || "✗ Missing",
+          configurationError: `Missing required environment variables: ${missingVars.join(", ")}`,
+        },
+      });
+    }
+
     // Fetch current usage data
     const currentUsage = await getR2Usage();
 
@@ -423,8 +487,8 @@ export default async function handler(req, res) {
       100;
 
     // Define thresholds for warnings and blocking
-    const criticalThreshold = 80; // 80% threshold for warnings
-    const blockingThreshold = 50; // 50% threshold for blocking uploads
+    const criticalThreshold = 80;
+    const blockingThreshold = 50;
 
     // Generate warnings for high usage
     const warnings = [];
@@ -438,14 +502,18 @@ export default async function handler(req, res) {
       warnings.push(`Class B operations at ${classBPercentage.toFixed(1)}%`);
     }
 
+    // Add configuration warnings if there are errors
+    if (currentUsage.error) {
+      warnings.push(`Analytics error: ${currentUsage.error}`);
+    }
+
     // Determine if uploads should be blocked
-    // Blocks at 50% to provide safety margin before hitting hard limits
     const shouldBlockUploads =
       storagePercentage >= blockingThreshold ||
       classAPercentage >= blockingThreshold ||
       classBPercentage >= blockingThreshold;
 
-    // Return structured response with usage data and debug information
+    // Return structured response
     return res.status(200).json({
       usage: {
         storage: {
@@ -470,7 +538,6 @@ export default async function handler(req, res) {
         lastUpdated: currentUsage.lastUpdated,
         period: currentUsage.period,
       },
-      // Debug section helps troubleshoot configuration issues
       debug: {
         email: process.env.CLOUDFLARE_EMAIL ? "✓ Set" : "✗ Missing",
         globalApiKey: process.env.CLOUDFLARE_GLOBAL_API_KEY
@@ -486,7 +553,8 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error("Usage API error:", error);
-    // Return error response with configuration status
+
+    // Return structured error response
     return res.status(500).json({
       error: "Failed to fetch usage",
       message: error.message,
@@ -497,6 +565,8 @@ export default async function handler(req, res) {
           : "✗ Missing",
         accountId: process.env.CLOUDFLARE_ACCOUNT_ID || "✗ Missing",
         bucketName: process.env.CLOUDFLARE_BUCKET_NAME || "✗ Missing",
+        errorStack:
+          process.env.NODE_ENV === "development" ? error.stack : undefined,
       },
     });
   }

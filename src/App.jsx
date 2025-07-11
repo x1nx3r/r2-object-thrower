@@ -22,7 +22,20 @@ function App() {
     setUsageError(null);
     try {
       const res = await fetch("/api/usage");
-      const data = await res.json();
+
+      // Check content type before parsing
+      const contentType = res.headers.get("content-type");
+      let data;
+
+      if (contentType && contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const textResponse = await res.text();
+        console.error("Usage API returned non-JSON:", textResponse);
+        throw new Error(
+          "Server configuration error: API returned HTML instead of JSON",
+        );
+      }
 
       if (res.ok) {
         setUsage(data.usage);
@@ -133,7 +146,21 @@ function App() {
         body: form,
       });
 
-      const data = await res.json();
+      // Check if the response is actually JSON before trying to parse
+      const contentType = res.headers.get("content-type");
+      let data;
+
+      if (contentType && contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        // Server returned non-JSON (likely HTML error page)
+        const textResponse = await res.text();
+        console.error("Server returned non-JSON response:", textResponse);
+
+        throw new Error(
+          `Server error: ${res.status} ${res.statusText}. The server returned an HTML error page instead of JSON. This usually means there's a server configuration issue or the API endpoint is not working properly.`,
+        );
+      }
 
       if (!res.ok) {
         if (res.status === 429) {
@@ -198,8 +225,22 @@ function App() {
       }
     } catch (err) {
       console.error("Upload error:", err);
-      setError(err.message || "Upload failed. Please try again.");
+
+      // More detailed error handling
+      if (err.name === "TypeError" && err.message.includes("Failed to fetch")) {
+        setError(
+          "Network error: Unable to connect to the server. Please check your internet connection and try again.",
+        );
+      } else if (err.message.includes("JSON.parse")) {
+        setError(
+          "Server configuration error: The server returned an invalid response. Please check the server logs and environment variables.",
+        );
+      } else {
+        setError(err.message || "Upload failed. Please try again.");
+      }
+
       clearInterval(progressInterval);
+      setUploadProgress(0);
     } finally {
       setUploading(false);
     }
