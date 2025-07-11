@@ -207,25 +207,30 @@ async function validateFile(file) {
   return true;
 }
 
+/**
+ * Fetch current usage data from our analytics API
+ * Used to check if upload would exceed limits
+ * @returns {Object} Current usage data or conservative fallback
+ */
 async function getCurrentUsage() {
-  console.log("[USAGE CHECK] Fetching current usage...");
-
   try {
+    // Determine base URL for API call
+    // Handle both local development and Vercel deployment
     const baseUrl = process.env.VERCEL_URL
       ? `https://${process.env.VERCEL_URL}`
       : process.env.NEXTAUTH_URL || "http://localhost:3000";
 
-    console.log("[USAGE CHECK] Using base URL:", baseUrl);
+    console.log("[USAGE FETCH] Fetching from:", `${baseUrl}/api/usage`);
 
     const response = await fetch(`${baseUrl}/api/usage`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
       },
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(15000), // 15 second timeout to prevent hanging
     });
 
-    console.log("[USAGE CHECK] Response status:", response.status);
+    console.log("[USAGE FETCH] Response status:", response.status);
 
     if (!response.ok) {
       throw new Error(
@@ -236,17 +241,35 @@ async function getCurrentUsage() {
     const contentType = response.headers.get("content-type");
     if (!contentType || !contentType.includes("application/json")) {
       const text = await response.text();
+      console.error("[USAGE FETCH] Non-JSON response:", text.substring(0, 200));
       throw new Error(
         `Usage API returned non-JSON response: ${text.substring(0, 200)}`,
       );
     }
 
     const data = await response.json();
-    console.log("[USAGE CHECK] Usage data retrieved successfully");
+    console.log(
+      "[USAGE FETCH] Raw API response:",
+      JSON.stringify(data, null, 2),
+    );
+
+    // The API returns { usage: { ... } }, so we need data.usage
+    if (!data.usage) {
+      console.error("[USAGE FETCH] No usage property in response:", data);
+      throw new Error("Invalid usage API response structure");
+    }
+
+    console.log(
+      "[USAGE FETCH] Extracted usage data:",
+      JSON.stringify(data.usage, null, 2),
+    );
     return data.usage;
   } catch (error) {
-    console.error("[USAGE CHECK] Error:", error);
-    return {
+    console.error("[USAGE FETCH] Error fetching current usage:", error);
+
+    // Return conservative estimates on error to prevent quota overruns
+    // Assumes 60% usage to err on the side of caution
+    const fallbackData = {
       storage: {
         currentGB: FREE_PLAN_LIMITS.STORAGE_GB * 0.6,
         limit: FREE_PLAN_LIMITS.STORAGE_GB,
@@ -265,27 +288,57 @@ async function getCurrentUsage() {
       },
       error: error.message,
     };
+
+    console.log(
+      "[USAGE FETCH] Using fallback data:",
+      JSON.stringify(fallbackData, null, 2),
+    );
+    return fallbackData;
   }
 }
 
+/**
+ * Check if uploading a file would exceed usage limits
+ * Calculates projected usage after upload and compares to thresholds
+ * @param {number} fileSize - Size of file to upload in bytes
+ * @returns {Object} Usage check results with recommendations
+ */
 async function checkUsageLimits(fileSize = 0) {
   console.log("[USAGE LIMITS] Checking usage limits for file size:", fileSize);
 
   const currentUsage = await getCurrentUsage();
+  console.log(
+    "[USAGE LIMITS] Current usage received:",
+    JSON.stringify(currentUsage, null, 2),
+  );
 
-  const projectedStorageBytes =
-    (currentUsage.storage.currentBytes || 0) + fileSize;
+  // Handle both the actual API structure and fallback structure
+  const storage = currentUsage.storage || {};
+  const classA = currentUsage.classA || {};
+  const classB = currentUsage.classB || {};
+
+  // Calculate what usage would be AFTER this upload
+  const currentStorageBytes = storage.currentBytes || 0;
+  const projectedStorageBytes = currentStorageBytes + fileSize;
   const projectedStorageGB = projectedStorageBytes / (1024 * 1024 * 1024);
-  const projectedClassA = currentUsage.classA.currentValue + 1;
+  const projectedClassA = (classA.currentValue || 0) + 1; // Each upload = 1 Class A operation
 
+  // Convert to percentages for comparison
   const storagePercentage =
     (projectedStorageGB / FREE_PLAN_LIMITS.STORAGE_GB) * 100;
   const classAPercentage =
     (projectedClassA / FREE_PLAN_LIMITS.CLASS_A_OPERATIONS) * 100;
-  const classBPercentage = currentUsage.classB.percentage;
+  const classBPercentage = classB.percentage || 0; // No change for reads
 
+  console.log("[USAGE LIMITS] Calculated percentages:", {
+    storage: storagePercentage,
+    classA: classAPercentage,
+    classB: classBPercentage,
+  });
+
+  // Check which limits would be exceeded
   const exceeded = [];
-  const threshold = USAGE_THRESHOLD * 100;
+  const threshold = USAGE_THRESHOLD * 100; // Convert 0.5 to 50%
 
   if (storagePercentage > threshold) {
     exceeded.push(`Storage (${storagePercentage.toFixed(1)}%)`);
@@ -298,37 +351,41 @@ async function checkUsageLimits(fileSize = 0) {
   }
 
   const result = {
-    canUpload: exceeded.length === 0,
-    exceededLimits: exceeded,
+    canUpload: exceeded.length === 0, // Can upload if no limits exceeded
+    exceededLimits: exceeded, // List of exceeded limits
     usage: {
       storage: {
-        current: currentUsage.storage.percentage,
-        currentGB: currentUsage.storage.currentGB,
+        current: storage.percentage || 0,
+        currentGB: storage.currentGB || 0,
         projectedGB: projectedStorageGB.toFixed(3),
         projectedPercentage: storagePercentage.toFixed(2),
         limit: FREE_PLAN_LIMITS.STORAGE_GB,
       },
       classA: {
-        current: currentUsage.classA.percentage,
-        currentValue: currentUsage.classA.currentValue,
+        current: classA.percentage || 0,
+        currentValue: classA.currentValue || 0,
         projectedValue: projectedClassA,
         projectedPercentage: classAPercentage.toFixed(2),
         limit: FREE_PLAN_LIMITS.CLASS_A_OPERATIONS,
       },
       classB: {
-        current: currentUsage.classB.percentage,
-        currentValue: currentUsage.classB.currentValue,
+        current: classB.percentage || 0,
+        currentValue: classB.currentValue || 0,
         limit: FREE_PLAN_LIMITS.CLASS_B_OPERATIONS,
       },
     },
-    analyticsError: currentUsage.error,
-    shouldBlockUploads: currentUsage.shouldBlockUploads,
+    analyticsError: currentUsage.error, // Any errors from analytics API
+    shouldBlockUploads: currentUsage.shouldBlockUploads || false, // Backend recommendation
   };
 
   console.log("[USAGE LIMITS] Check result:", {
     canUpload: result.canUpload,
     exceeded: result.exceededLimits,
+    currentStorageBytes,
+    projectedStorageBytes,
+    projectedStorageGB: projectedStorageGB.toFixed(3),
   });
+
   return result;
 }
 
