@@ -24,6 +24,9 @@ export const ALLOWED_MIME_TYPES = [
   "image/png",
   "image/gif",
   "image/webp",
+  // Markdown / text
+  "text/markdown",
+  "text/x-markdown",
 ];
 
 /**
@@ -34,6 +37,10 @@ export const MAGIC_NUMBERS = {
   "image/png": [0x89, 0x50, 0x4e, 0x47],
   "image/gif": [0x47, 0x49, 0x46],
   "image/webp": [0x52, 0x49, 0x46, 0x46],
+  // No fixed magic number for markdown/text files. Use null to indicate
+  // fallback text validation (printable / UTF-8-like bytes).
+  "text/markdown": null,
+  "text/x-markdown": null,
 };
 
 export function validateFileType(buffer, mimetype) {
@@ -42,6 +49,25 @@ export function validateFileType(buffer, mimetype) {
       type === mimetype ||
       (type === "image/jpeg" && mimetype === "image/jpg")
     ) {
+      // If signature is null or empty, treat this as a text-type check.
+      if (!signature || signature.length === 0) {
+        // Basic heuristic: ensure the sample contains mostly printable
+        // characters, allows common whitespace (CR/LF/TAB), and no NULs.
+        if (!buffer || buffer.length === 0) return false;
+        let nonPrintable = 0;
+        for (let i = 0; i < buffer.length; i++) {
+          const byte = buffer[i];
+          if (byte === 0) return false; // definitely binary
+          // allow TAB(9), LF(10), CR(13)
+          if (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) {
+            nonPrintable++;
+          }
+        }
+        // If more than 30% of the sample is non-printable, reject.
+        if (nonPrintable / buffer.length > 0.3) return false;
+        return true;
+      }
+
       const matches = signature.every((byte, index) => buffer[index] === byte);
       if (matches) return true;
     }
@@ -92,6 +118,8 @@ export function validateFileExtension(file) {
     "image/png": ["png"],
     "image/gif": ["gif"],
     "image/webp": ["webp"],
+    "text/markdown": ["md", "markdown"],
+    "text/x-markdown": ["md", "markdown"],
   };
 
   if (!validExtensions[file.mimetype]?.includes(fileExtension)) {
