@@ -6,14 +6,15 @@ import fs from "fs";
 import crypto from "crypto";
 
 /**
- * Initialize S3 Client for Cloudflare R2
+ * Initialize S3 Client for S3-compatible storage
  */
 const s3 = new S3Client({
-  region: process.env.R2_REGION || "auto",
-  endpoint: process.env.R2_ENDPOINT,
+  region: process.env.S3_REGION || "us-east-1",
+  endpoint: process.env.S3_ENDPOINT,
+  forcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
   credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY,
-    secretAccessKey: process.env.R2_SECRET_KEY,
+    accessKeyId: process.env.S3_ACCESS_KEY_ID,
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
   },
 });
 
@@ -165,11 +166,10 @@ export default async function handler(req, res) {
   try {
     // Validate environment variables
     const requiredEnvVars = [
-      "R2_ENDPOINT",
-      "R2_ACCESS_KEY",
-      "R2_SECRET_KEY",
-      "R2_BUCKET",
-      "R2_CUSTOM_DOMAIN",
+      "S3_ENDPOINT",
+      "S3_ACCESS_KEY_ID",
+      "S3_SECRET_ACCESS_KEY",
+      "S3_BUCKET",
     ];
     const missingVars = requiredEnvVars.filter(
       (varName) => !process.env[varName],
@@ -270,7 +270,7 @@ export default async function handler(req, res) {
     // Upload to R2
     await s3.send(
       new PutObjectCommand({
-        Bucket: process.env.R2_BUCKET,
+        Bucket: process.env.S3_BUCKET,
         Key: filename,
         Body: fileBuffer,
         ContentType: file.mimetype,
@@ -287,7 +287,7 @@ export default async function handler(req, res) {
     fs.unlinkSync(file.filepath);
 
     // Generate public URL
-    const publicUrl = `https://${process.env.R2_CUSTOM_DOMAIN}/free-bucket/${filename}`;
+    const publicUrl = `${process.env.S3_ENDPOINT}/${process.env.S3_BUCKET}/${filename}`;
 
     console.log(
       `Upload successful: ${filename} (${file.size} bytes) from IP: ${clientIP}`,

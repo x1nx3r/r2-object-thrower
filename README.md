@@ -69,13 +69,13 @@ npm install
 ### Step 2: Environment Variables (The Fun Part)
 Create `.env.local` and fill it with secrets:
 ```env
-# R2 Configuration (Get these from Cloudflare's maze of a dashboard)
-R2_ACCESS_KEY=your_r2_access_key
-R2_SECRET_KEY=your_r2_secret_key_thats_definitely_not_in_git_right
-R2_BUCKET=your_bucket_name
-R2_ENDPOINT=https://your-account-id.r2.cloudflarestorage.com
-R2_REGION=auto
-R2_CUSTOM_DOMAIN=cdn.yourdomain.com
+# S3 Configuration (Any S3-compatible provider: R2, MinIO, AWS, Backblaze...)
+S3_ENDPOINT=https://your-s3-endpoint.com
+S3_REGION=us-east-1
+S3_ACCESS_KEY_ID=your_access_key
+S3_SECRET_ACCESS_KEY=your_secret_key
+S3_BUCKET=your_bucket_name
+S3_FORCE_PATH_STYLE=true
 
 # Cloudflare Analytics (For the masochists)
 CLOUDFLARE_EMAIL=your_email@example.com
