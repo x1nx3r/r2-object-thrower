@@ -55,14 +55,22 @@ function getClientIP(req) {
 }
 
 function isValidOrigin(origin) {
+  if (!origin) return true;
+
+  const normalize = (value) =>
+    value?.replace(/^https?:\/\//, "").replace(/\/$/, "");
+
   const allowedOrigins = [
     process.env.ALLOWED_ORIGIN,
-    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
-    "http://localhost:3000",
-    "https://localhost:3000",
-  ].filter(Boolean);
+    process.env.VERCEL_URL,
+    process.env.VERCEL_PROJECT_PRODUCTION_URL,
+    process.env.VERCEL_BRANCH_URL,
+    "localhost:3000",
+  ]
+    .filter(Boolean)
+    .map(normalize);
 
-  return !origin || allowedOrigins.includes(origin);
+  return allowedOrigins.includes(normalize(origin));
 }
 
 function rateLimitCheck(ip) {
